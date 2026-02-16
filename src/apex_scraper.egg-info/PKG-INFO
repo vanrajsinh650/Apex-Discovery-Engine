@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: apex-scraper
+Version: 0.1.0
+Summary: A local business scraper CLI tool.
+Requires-Python: >=3.9
+Requires-Dist: playwright>=1.41.0
+Requires-Dist: typer[all]>=0.9.0
+Requires-Dist: rich>=13.0.0
+Requires-Dist: duckduckgo-search>=4.0.0
