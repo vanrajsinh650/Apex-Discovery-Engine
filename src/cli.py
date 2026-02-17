@@ -55,5 +55,17 @@ def discover(
     from src.common.utils import save_unique_urls
     save_unique_urls(urls, output)
 
+@app.command()
+def extract(
+    input: str = typer.Option("data/websites.json", help="Input JSON file with URLs"),
+    output: str = typer.Option("data/pg.json", help="Output JSON file for PGs (default: pg.json)")
+):
+    """
+    Extract contact info (Mobile, Address, Name) from discovered URLs.
+    """
+    from src.scraper.extractor import process_websites_list
+    process_websites_list(input, output)
+
+
 if __name__ == "__main__":
     app()

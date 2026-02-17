@@ -130,73 +130,92 @@ def search_bing(query: str, limit: int = 50, headless: bool = False):
             
     return list(unique_links)
 
-def search_google_fallback(query: str, limit: int = 50, headless: bool = False):
+def search_google_maps(query: str, limit: int = 50, headless: bool = False):
     """
-    Interactive Google Search. Waits for user if blocked.
+    Scrapes Google Maps for website links. 
+    Bypasses main Search CAPTCHA and gets high quality local results.
     """
-    console.print(f"[bold blue]Starting Interactive Google Search for:[/bold blue] {query}")
-    console.print("[yellow]NOTE: If a CAPTCHA appears, please solve it manually in the browser window![/yellow]")
-    
+    console.print(f"[bold blue]Starting Google Maps Search for:[/bold blue] {query}")
     unique_links = set()
-    # Force visible for interactive solving
-    headless = False 
     
-    base_url = "https://www.google.com/search?q={}&num={}"
-    fetch_num = 100 if limit <= 0 else min(limit, 100) 
-    target_url = base_url.format(query.replace(" ", "+"), fetch_num)
+    # Maps allows scrolling for many results
+    # We should use headless=False to be safe, but it often works headless too.
+    # User asked for 'Chrome' which usually implies visible.
+    
+    url = f"https://www.google.com/maps/search/{query.replace(' ', '+')}"
     
     with sync_playwright() as p:
         try:
-            user_agent = get_random_header()
             browser = p.chromium.launch(headless=headless)
-            context = browser.new_context(user_agent=user_agent)
+            context = browser.new_context(
+                viewport={"width": 1366, "height": 768},
+                user_agent=get_random_header()
+            )
             page = context.new_page()
             
-            console.print(f"Navigating to Google...")
-            page.goto(target_url, timeout=60000)
+            console.print(f"Navigating to Maps: {url}...")
+            page.goto(url, timeout=60000)
             
-            # Check for captcha/consent
-            if "sorry/index" in page.url or "captcha" in page.content().lower() or "consent.google" in page.url:
-                console.print("[bold red]Google requires manual interaction![/bold red]")
-                console.print("[bold green]Please solve the CAPTCHA or click 'I agree' in the browser...[/bold green]")
-                console.print("Waiting for you to solve it...")
-                
-                # Wait loop
-                for i in range(60):
-                    time.sleep(1)
-                    if "sorry/index" not in page.url and "captcha" not in page.content().lower() and "consent.google" not in page.url:
-                        console.print("[green]Challenge passed![/green]")
-                        break
-                
-            # Scroll a bit
-            page.evaluate("window.scrollTo(0, 1000)")
-            random_delay(1, 3)
-
-            # Standard Google Selectors
-            elements = page.locator("#search .g a").all()
+            # Wait for feed
+            try:
+                page.wait_for_selector('div[role="feed"]', timeout=20000)
+            except:
+                console.print("[yellow]Maps feed not found immediately. Checking for consent...[/yellow]")
+                if "consent.google" in page.url:
+                     console.print("[bold red]Google requires interaction![/bold red]")
+                     # Wait for manual fix
+                     time.sleep(15) 
             
-            for el in elements:
-                href = el.get_attribute("href")
-                if href and href.startswith("http") and "google.com" not in href:
-                    norm = normalize_url(href)
-                    if norm and norm not in unique_links:
-                        unique_links.add(norm)
-                        console.print(f"Found: {norm}")
-                        if limit > 0 and len(unique_links) >= limit:
-                            break
+            # Scroll Loop
+            # We scroll the feed container
+            feed = page.locator('div[role="feed"]')
+            
+            # If limit is 0 (unlimited), scroll A LOT (e.g., 500 times ~ 5000+ results)
+            max_scrolls = 500 if limit <= 0 else (limit // 2) + 5
+            
+            for i in range(max_scrolls):
+                # console.print(f"[dim]Scrolling batch {i+1}...[/dim]")
+                
+                # Extract visible cards
+                # Selectors: div[jsaction] inside feed.
+                # Find website buttons: a[data-value="Website"]
+                
+                # We can extract all current visible buttons
+                buttons = page.locator('a[data-value="Website"]').all()
+                new_found = 0
+                
+                for btn in buttons:
+                    href = btn.get_attribute("href")
+                    if href:
+                        norm = normalize_url(href)
+                        if norm and norm not in unique_links:
+                            unique_links.add(norm)
+                            new_found += 1
+                            console.print(f"Found (Maps): {norm}")
                             
-            if not unique_links:
-                console.print("[red]No Google results found. Saving screenshot and HTML...[/red]")
-                page.screenshot(path="debug_tools/debug_google_empty.png")
-                with open("debug_tools/debug_google_empty.html", "w") as f:
-                    f.write(page.content())
-            
+                # Scroll
+                feed.hover()
+                page.mouse.wheel(0, 3000)
+                time.sleep(2) # Wait for load
+                
+                if limit > 0 and len(unique_links) >= limit:
+                    console.print(f"[green]Hit limit of {limit} URLs.[/green]")
+                    break
+                    
+                # End of list check?
+                if "You've reached the end of the list" in page.content():
+                    break
+                    
             browser.close()
             
         except Exception as e:
-            console.print(f"[bold red]Google Error:[/bold red] {e}")
+            console.print(f"[bold red]Maps Error:[/bold red] {e}")
             
     return list(unique_links)
+
+def search_google_fallback(query: str, limit: int = 50, headless: bool = False):
+   # Redirect to Maps scraper as it is superior
+   return search_google_maps(query, limit, headless)
 
 def search_brave(query: str, limit: int = 50, headless: bool = False, output_file: str = "data/websites.json"):
     """
@@ -232,9 +251,12 @@ def search_brave(query: str, limit: int = 50, headless: bool = False, output_fil
                 console.print("[bold green]Please solve the CAPTCHA in the browser... (Waiting 30s)[/bold green]")
                 time.sleep(30)
             
-            # Massive Pagination Loop (Max 50 Pages)
-            # Range should start from start_page
-            for page_num in range(start_page, 51):
+            # Massive Pagination Loop 
+            # If unlimited, go up to 200 pages
+            max_pages = 200 if limit <= 0 else 50
+            if limit > 200: max_pages = (limit // 10) + 10 # heuristic
+
+            for page_num in range(start_page, max_pages + 1):
                 console.print(f"[dim]Scraping Page {page_num}... (Found: {len(unique_links)}/{limit})[/dim]")
                 
                 # Save State immediately or after success? 
@@ -328,32 +350,51 @@ def search_brave(query: str, limit: int = 50, headless: bool = False, output_fil
 
 def search_waterfall(query: str, limit: int = 50, headless: bool = False, output_file: str = "data/websites.json"):
     """
-    Robust Discovery: Brave -> Bing -> DuckDuckGo
-    With Deep Scraping for Aggregators.
+    Robust Discovery: Aggregates results from Google Maps (Local) AND Brave (Organic).
+    Get EVERYTHING: Maps + Websites.
     """
-    console.print(f"[bold magenta]Starting Waterfall Search Strategy for: {query}[/bold magenta]")
+    console.print(f"[bold magenta]Starting Multi-Source Discovery for: {query}[/bold magenta]")
     
-    results = []
+    all_results = []
     
-    # 1. Try Brave (Primary)
-    results = search_brave(query, limit, headless, output_file)
-    
-    if not results:
-        console.print("[bold yellow]Brave failed/blocked. Switching to Bing...[/bold yellow]")
-        # 2. Try Bing (Visible)
-        results = search_bing(query, limit, False) 
-        
-        if not results:
-            console.print("[bold yellow]Bing failed. Switching to DuckDuckGo (Last Resort)...[/bold yellow]")
-            # 3. Try DDG
-            results = search_ddg(query, limit, headless)
+    # 1. Google Maps (Best for Local/PGs)
+    try:
+        maps_results = search_google_maps(query, limit, headless)
+        if maps_results:
+            console.print(f"[green]Maps found {len(maps_results)} links.[/green]")
+            all_results.extend(maps_results)
+    except Exception as e:
+        console.print(f"[dim]Google Maps failed: {e}[/dim]")
 
-    # Post-Processing: Maps
-    if results:
-        # Deduplicate first
-        results = list(set(results))
+    # 2. Brave Search (Best for Aggregators/Directories like Justdial)
+    # We always run this too, to get the "websites" the user requested.
+    try:
+        organic_limit = limit 
+        # If limit is 0, we pass 0 (unlimited) to Brave
         
-    return list(set(results))
+        console.print("[bold orange3]Now searching Organic Results (Websites/Directories)...[/bold orange3]")
+        brave_results = search_brave(query, organic_limit, headless, output_file)
+        if brave_results:
+             console.print(f"[green]Brave found {len(brave_results)} organic links.[/green]")
+             all_results.extend(brave_results)
+    except Exception as e:
+        console.print(f"[dim]Brave failed: {e}[/dim]")
+        
+    # 3. Fallback to Bing if total is low?
+    if len(all_results) < 5:
+         console.print("[yellow]Low results. Adding Bing Search...[/yellow]")
+         try:
+             bing_results = search_bing(query, limit, False)
+             if bing_results:
+                 all_results.extend(bing_results)
+         except:
+             pass
+
+    # Deduplicate
+    unique_results = list(set(all_results))
+    console.print(f"[bold]Total Combined Unique URLs: {len(unique_results)}[/bold]")
+        
+    return unique_results
 
 def extract_local_pack(page) -> list[str]:
     """ Extract links from Local/Map Pack if present """

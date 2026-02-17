@@ -47,6 +47,13 @@ def interactive():
             
             from src.common.utils import save_unique_urls
             save_unique_urls(urls, output_file)
+            
+            # Follow-up: Extraction Prompt
+            console.print("\n[bold cyan]--- Phase 2: Data Extraction ---[/bold cyan]")
+            if typer.confirm("Do you want to extract Contact Info (Mobile, Address) from these URLs?"):
+                from src.scraper.extractor import process_websites_list
+                process_websites_list(input_file=output_file, output_file="data/pg.json")
+                
         else:
             console.print("\n[bold red]No URLs found.[/bold red]")
             console.print("Note: Search might be blocked on this network. Please check 'data/websites.json' manually.")
