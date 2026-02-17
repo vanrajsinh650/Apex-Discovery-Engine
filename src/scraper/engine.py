@@ -185,7 +185,7 @@ def search_google_fallback(query: str, limit: int = 50, headless: bool = False):
 
 def search_brave(query: str, limit: int = 50, headless: bool = True):
     """
-    Scrapes Brave Search. Good fallback if Google/Bing block.
+    Scrapes Brave Search with pagination support.
     """
     console.print(f"[bold orange3]Starting Brave Search for:[/bold orange3] {query}")
     unique_links = set()
@@ -199,42 +199,66 @@ def search_brave(query: str, limit: int = 50, headless: bool = True):
             )
             page = context.new_page()
             
-            # Brave Search URL
+            # Initial Search
             page.goto(f"https://search.brave.com/search?q={query}&source=web", timeout=60000)
-            random_delay(2, 3)
             
-            # Scroll to load more
-            for _ in range(3):
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(1)
-            
-            # Extract
-            # Brave uses .snippet[data-type="web"] for organic results
-            results = page.locator(".snippet[data-type='web']").all()
-            
-            console.print(f"[dim]Brave Raw Results Found: {len(results)}[/dim]")
-            
-            for r in results:
-                # The main link is usually the first 'a' tag or class 'l1'
-                try:
-                    link_el = r.locator("a").first
-                    href = link_el.get_attribute("href")
-                    
-                    if href and href.startswith("http") and "brave.com" not in href:
-                        if href not in unique_links:
-                            unique_links.add(href)
-                            console.print(f"Found (Brave): {href}")
-                            if len(unique_links) >= limit:
-                                break
-                except:
-                    continue
-            
-            if not unique_links:
-                console.print("[red]No Brave results found. Saving screenshot...[/red]")
-                page.screenshot(path="debug_tools/debug_brave_empty.png")
-                with open("debug_tools/debug_brave_empty.html", "w") as f:
-                    f.write(page.content())
+            # Pagination Loop
+            page_num = 1
+            while len(unique_links) < limit:
+                console.print(f"[dim]Scraping Page {page_num}... (Found: {len(unique_links)}/{limit})[/dim]")
+                random_delay(2, 4)
+                
+                # Scroll to trigger lazy loading
+                for _ in range(3):
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    time.sleep(1)
+                
+                # Extract Results
+                results = page.locator(".snippet[data-type='web']").all()
+                new_on_page = 0
+                
+                for r in results:
+                    try:
+                        link_el = r.locator("a").first
+                        href = link_el.get_attribute("href")
+                        
+                        if href and href.startswith("http") and "brave.com" not in href:
+                            if href not in unique_links:
+                                unique_links.add(href)
+                                new_on_page += 1
+                                console.print(f"Found: {href}")
+                                if len(unique_links) >= limit:
+                                    break
+                    except:
+                        continue
 
+                console.print(f"[dim]Added {new_on_page} new links from page {page_num}[/dim]")
+                
+                if len(unique_links) >= limit:
+                    break
+
+                # Find 'Next' button
+                try:
+                    next_btn = page.get_by_role("link", name="Next").first
+                    if not next_btn.is_visible():
+                        # Fallback for different DOM states
+                        next_btn = page.locator("a:has-text('Next')").first
+                    
+                    if next_btn.is_visible():
+                        console.print("[dim]Navigating to next page...[/dim]")
+                        next_btn.click()
+                        # 'networkidle' can be flaky on dynamic sites, use 'domcontentloaded' + buffer
+                        page.wait_for_load_state("domcontentloaded", timeout=30000)
+                        random_delay(2, 4) # Buffer for dynamic content
+                        page_num += 1
+                    else:
+                        console.print("[yellow]No 'Next' button found. End of results.[/yellow]")
+                        break
+                except Exception as e:
+                    console.print(f"[dim]Pagination error: {e}[/dim]")
+                    # Don't break immediately on minor errors, but for navigation failure we should probably stop
+                    break
+            
             browser.close()
             
         except Exception as e:
