@@ -29,19 +29,16 @@ def interactive():
         limit = 50
         output_file = "data/websites.json"
         
-        # search_google now routes to DDG automatically
-        urls = search_google(query, limit=limit, headless=True)
+        # Default to Waterfall (Auto)
+        from src.scraper.engine import search_waterfall
+        urls = search_waterfall(query, limit=limit, headless=False)
         
         # 3. Save results
         if urls:
-            console.print(f"\n[bold green]Found {len(urls)} unique URLs.[/bold green]")
+            console.print(f"\n[bold green]Found {len(urls)} unique URLs from this search.[/bold green]")
             
-            # Ensure data directory exists
-            os.makedirs(os.path.dirname(output_file), exist_ok=True)
-            
-            with open(output_file, "w") as f:
-                json.dump(urls, f, indent=2)
-            console.print(f"Results saved to [bold]{output_file}[/bold]")
+            from src.common.utils import save_unique_urls
+            save_unique_urls(urls, output_file)
         else:
             console.print("\n[bold red]No URLs found.[/bold red]")
             console.print("Note: Search might be blocked on this network. Please check 'data/websites.json' manually.")

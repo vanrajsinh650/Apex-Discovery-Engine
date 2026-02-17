@@ -1,5 +1,7 @@
 import random
 import time
+import base64
+import urllib.parse
 from playwright.sync_api import sync_playwright
 from src.common.utils import console, get_random_header, random_delay
 
@@ -17,138 +19,248 @@ def search_google(query: str, limit: int = 50, headless: bool = True):
         
     return results
 
-def search_google_fallback(query: str, limit: int = 50, headless: bool = True):
-    """
-    Legacy Google Search (Blocked often). Used as backup.
-    """
-    console.print(f"[bold blue]Starting Stealth Search (Fallback) for:[/bold blue] {query}")
-    
-    unique_links = set()
-    max_retries = 3
-    base_url = "https://www.google.com/search?q={}&num={}"
-    fetch_num = min(limit, 100) 
-    target_url = base_url.format(query.replace(" ", "+"), fetch_num)
-    
-    with sync_playwright() as p:
-        for attempt in range(max_retries):
-            try:
-                user_agent = get_random_header()
-                console.print(f"[dim]Attempt {attempt+1}/{max_retries} with UA: ...{user_agent[-20:]}[/dim]")
-                
-                browser = p.chromium.launch(
-                    headless=headless,
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--no-sandbox",
-                        f"--user-agent={user_agent}"
-                    ]
-                )
-                
-                context = browser.new_context(
-                    user_agent=user_agent,
-                    viewport={"width": random.randint(1280, 1920), "height": random.randint(720, 1080)},
-                    locale="en-US",
-                    timezone_id="Asia/Kolkata"
-                )
-                
-                context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
-                
-                page = context.new_page()
-                random_delay(1.0, 3.0)
-                
-                console.print(f"Navigating to search page...")
-                try:
-                    page.goto(target_url, timeout=60000, wait_until="domcontentloaded")
-                except:
-                    pass # Timeout
-
-                if "sorry/index" in page.url or "captcha" in page.content().lower():
-                    console.print("[bold red]Hit Google Captcha/Block![/bold red]")
-                    browser.close()
-                    time.sleep(2 ** (attempt + 2))
-                    continue
-
-                try:
-                    page.wait_for_selector("#search", timeout=10000)
-                except:
-                    pass
-                
-                elements = page.locator("#search .g a").all()
-                
-                for el in elements:
-                    href = el.get_attribute("href")
-                    if href and href.startswith("http") and "google.com" not in href:
-                        if href not in unique_links:
-                            unique_links.add(href)
-                            console.print(f"Found: {href}")
-                            if len(unique_links) >= limit:
-                                break
-                
-                browser.close()
-                if unique_links:
-                    break
-                else:
-                    time.sleep(2)
-                    
-            except Exception as e:
-                console.print(f"[bold red]Error in attempt {attempt+1}:[/bold red] {e}")
-                time.sleep(2 ** (attempt + 2))
-            
     return list(unique_links)
 
-def search_ddg(query: str, limit: int = 50, headless: bool = True):
+def search_bing(query: str, limit: int = 50, headless: bool = False):
     """
-    Searches DuckDuckGo HTML version as a fallback.
+    Searches Bing.com. Often better than DDG, closer to Google.
     """
-    console.print(f"[bold blue]Starting DuckDuckGo Search for:[/bold blue] {query}")
+    console.print(f"[bold blue]Starting Bing Search for:[/bold blue] {query}")
     unique_links = set()
     
-    # DDG HTML is simpler and often less blocked
-    url = "https://html.duckduckgo.com/html/"
-    
-    # DDG often blocks headless, so we force visible mode for now
-    # This is a trade-off for getting results without complex solving.
-    console.print("[dim]Launching visible browser to bypass DDG bot check...[/dim]")
+    # Bing is strict, so we default to visible mode
+    headless = False # Force visible for Bing to avoid immediate blocks
     
     with sync_playwright() as p:
         try:
-            browser = p.chromium.launch(headless=False)
-            page = browser.new_page()
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(
+                viewport={"width": 1366, "height": 768},
+                user_agent=get_random_header()
+            )
+            page = context.new_page()
             
-            # Navigate to DDG HTML
-            console.print("Navigating to DDG HTML...")
-            page.goto(url, timeout=60000)
+            # Navigate to Bing
+            console.print("Navigating to Bing...")
+            page.goto(f"https://www.bing.com/search?q={query}&count=50", timeout=60000)
+            random_delay(2, 4)
             
-            # Fill query and submit
-            page.fill("input[name='q']", query)
-            page.click("input[type='submit']")
-            page.wait_for_load_state("networkidle")
+            # Scroll to load more results if needed
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            random_delay(1, 2)
             
-            # Extract links
-            try:
-                page.wait_for_selector(".result__a", timeout=5000)
-            except:
-                pass
+            # Check for generic challenge/captcha
+            if "challenge" in page.content().lower() or "captcha" in page.content().lower():
+                console.print("[bold red]Bing requires manual interaction (CAPTCHA/Challenge)![/bold red]")
+                console.print("[bold green]Please solve it in the browser window...[/bold green]")
+                # Wait loop
+                for i in range(30):
+                    time.sleep(1)
+                    if "challenge" not in page.content().lower() and "captcha" not in page.content().lower():
+                        console.print("[green]Challenge passed![/green]")
+                        break
+                
+            # Extract links - Bing organic results usually have class 'b_algo'
+            results = page.locator(".b_algo h2 a").all()
             
-            results = page.locator(".result__a").all()
+            if not results:
+                 # Fallback selector
+                results = page.locator("li.b_algo h2 a").all()
+            
+            if not results:
+                # One last check after wait
+                console.print("[yellow]Re-checking for results after potential manual fix...[/yellow]")
+                results = page.locator(".b_algo h2 a").all()
+
+            if not results:
+                console.print("[red]No Bing results found. Saving screenshot and HTML...[/red]")
+                page.screenshot(path="debug_tools/debug_bing_empty.png")
+                with open("debug_tools/debug_bing_empty.html", "w") as f:
+                    f.write(page.content())
+
+            console.print(f"[dim]Bing Raw Results Found: {len(results)}[/dim]")
             
             for r in results:
                 href = r.get_attribute("href")
-                if href and href.startswith("http"):
+                
+                # Handle Bing redirects
+                if href and "bing.com/ck/" in href:
+                    try:
+                        parsed = urllib.parse.urlparse(href)
+                        qs = urllib.parse.parse_qs(parsed.query)
+                        if "u" in qs:
+                            u_val = qs["u"][0]
+                            # Remove 'a1' prefix pattern seen in logs
+                            if u_val.startswith("a1"):
+                                u_val = u_val[2:]
+                            # Add padding
+                            u_val += "=" * ((4 - len(u_val) % 4) % 4)
+                            # Decode
+                            decoded_bytes = base64.urlsafe_b64decode(u_val)
+                            href = decoded_bytes.decode("utf-8")
+                            console.print(f"[dim]Decoded Bing URL: {href}[/dim]")
+                    except Exception as e:
+                        console.print(f"[dim]Failed to decode Bing URL: {e}[/dim]")
+
+                if href and href.startswith("http") and "microsoft.com" not in href and "bing.com" not in href:
                     if href not in unique_links:
                         unique_links.add(href)
-                        console.print(f"Found (DDG): {href}")
+                        console.print(f"Found (Bing): {href}")
                         if len(unique_links) >= limit:
                             break
                             
             browser.close()
             
         except Exception as e:
-            console.print(f"[bold red]DDG Error:[/bold red] {e}")
-            try:
-                page.screenshot(path="debug_tools/debug_ddg_fail.png")
-                console.print("[dim]Saved debug_tools/debug_ddg_fail.png[/dim]")
-            except:
-                pass
+            console.print(f"[bold red]Bing Error:[/bold red] {e}")
             
     return list(unique_links)
+
+def search_google_fallback(query: str, limit: int = 50, headless: bool = False):
+    """
+    Interactive Google Search. Waits for user if blocked.
+    """
+    console.print(f"[bold blue]Starting Interactive Google Search for:[/bold blue] {query}")
+    console.print("[yellow]NOTE: If a CAPTCHA appears, please solve it manually in the browser window![/yellow]")
+    
+    unique_links = set()
+    # Force visible for interactive solving
+    headless = False 
+    
+    base_url = "https://www.google.com/search?q={}&num={}"
+    fetch_num = min(limit, 100) 
+    target_url = base_url.format(query.replace(" ", "+"), fetch_num)
+    
+    with sync_playwright() as p:
+        try:
+            user_agent = get_random_header()
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(user_agent=user_agent)
+            page = context.new_page()
+            
+            console.print(f"Navigating to Google...")
+            page.goto(target_url, timeout=60000)
+            
+            # Check for captcha/consent
+            if "sorry/index" in page.url or "captcha" in page.content().lower() or "consent.google" in page.url:
+                console.print("[bold red]Google requires manual interaction![/bold red]")
+                console.print("[bold green]Please solve the CAPTCHA or click 'I agree' in the browser...[/bold green]")
+                console.print("Waiting for you to solve it...")
+                
+                # Wait loop
+                for i in range(60):
+                    time.sleep(1)
+                    if "sorry/index" not in page.url and "captcha" not in page.content().lower() and "consent.google" not in page.url:
+                        console.print("[green]Challenge passed![/green]")
+                        break
+                
+            # Scroll a bit
+            page.evaluate("window.scrollTo(0, 1000)")
+            random_delay(1, 3)
+
+            # Standard Google Selectors
+            elements = page.locator("#search .g a").all()
+            
+            for el in elements:
+                href = el.get_attribute("href")
+                if href and href.startswith("http") and "google.com" not in href:
+                    if href not in unique_links:
+                        unique_links.add(href)
+                        console.print(f"Found: {href}")
+                        if len(unique_links) >= limit:
+                            break
+                            
+            if not unique_links:
+                console.print("[red]No Google results found. Saving screenshot and HTML...[/red]")
+                page.screenshot(path="debug_tools/debug_google_empty.png")
+                with open("debug_tools/debug_google_empty.html", "w") as f:
+                    f.write(page.content())
+            
+            browser.close()
+            
+        except Exception as e:
+            console.print(f"[bold red]Google Error:[/bold red] {e}")
+            
+    return list(unique_links)
+
+def search_brave(query: str, limit: int = 50, headless: bool = True):
+    """
+    Scrapes Brave Search. Good fallback if Google/Bing block.
+    """
+    console.print(f"[bold orange3]Starting Brave Search for:[/bold orange3] {query}")
+    unique_links = set()
+    
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=headless)
+            context = browser.new_context(
+                viewport={"width": 1366, "height": 768},
+                user_agent=get_random_header()
+            )
+            page = context.new_page()
+            
+            # Brave Search URL
+            page.goto(f"https://search.brave.com/search?q={query}&source=web", timeout=60000)
+            random_delay(2, 3)
+            
+            # Scroll to load more
+            for _ in range(3):
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                time.sleep(1)
+            
+            # Extract
+            # Brave uses .snippet[data-type="web"] for organic results
+            results = page.locator(".snippet[data-type='web']").all()
+            
+            console.print(f"[dim]Brave Raw Results Found: {len(results)}[/dim]")
+            
+            for r in results:
+                # The main link is usually the first 'a' tag or class 'l1'
+                try:
+                    link_el = r.locator("a").first
+                    href = link_el.get_attribute("href")
+                    
+                    if href and href.startswith("http") and "brave.com" not in href:
+                        if href not in unique_links:
+                            unique_links.add(href)
+                            console.print(f"Found (Brave): {href}")
+                            if len(unique_links) >= limit:
+                                break
+                except:
+                    continue
+            
+            if not unique_links:
+                console.print("[red]No Brave results found. Saving screenshot...[/red]")
+                page.screenshot(path="debug_tools/debug_brave_empty.png")
+                with open("debug_tools/debug_brave_empty.html", "w") as f:
+                    f.write(page.content())
+
+            browser.close()
+            
+        except Exception as e:
+            console.print(f"[bold red]Brave Error:[/bold red] {e}")
+            
+    return list(unique_links)
+
+def search_waterfall(query: str, limit: int = 50, headless: bool = False):
+    """
+    Robust Discovery: Brave -> Bing -> DuckDuckGo
+    """
+    console.print(f"[bold magenta]Starting Waterfall Search Strategy for: {query}[/bold magenta]")
+    
+    # 1. Try Brave (Primary)
+    results = search_brave(query, limit, headless)
+    if results:
+        return results
+        
+    console.print("[bold yellow]Brave failed/blocked. Switching to Bing...[/bold yellow]")
+
+    # 2. Try Bing (Visible)
+    results = search_bing(query, limit, False) # Force visible for Bing
+    if results:
+        return results
+
+    console.print("[bold yellow]Bing failed. Switching to DuckDuckGo (Last Resort)...[/bold yellow]")
+    
+    # 3. Try DDG
+    return search_ddg(query, limit, headless)
