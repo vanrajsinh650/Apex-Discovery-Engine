@@ -1,24 +1,18 @@
 import sys
 import json
 import os
-try:
-    from scraper.main import app
-    from scraper.search_engine import search_google
-except ImportError:
-    # Handle case where src is not in pythonpath by adding it
-    sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
-    from scraper.main import app
-    from scraper.search_engine import search_google
-
 from rich.console import Console
+
+from src.cli import app
+from src.scraper.engine import search_google
 
 console = Console()
 
 def interactive():
     """
-    Run the interactive wizard for the scraper.
+    Run the interactive wizard for the Apex Discovery Agent.
     """
-    console.print("[bold green]Apex Discovery Engine - Interactive Mode[/bold green]")
+    console.print("[bold green]Apex Discovery Agent - Interactive Mode[/bold green]")
     console.print("This tool will help you discover website URLs for your search query.")
     
     # 1. Get input from user
@@ -35,6 +29,7 @@ def interactive():
         limit = 50
         output_file = "data/websites.json"
         
+        # search_google now routes to DDG automatically
         urls = search_google(query, limit=limit, headless=True)
         
         # 3. Save results
