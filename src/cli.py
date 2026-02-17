@@ -9,9 +9,6 @@ console = Console()
 
 @app.callback()
 def callback():
-    """
-    Apex Discovery Engine CLI
-    """
     pass
 
 @app.command()

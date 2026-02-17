@@ -40,16 +40,13 @@ def search_bing(query: str, limit: int = 50, headless: bool = False):
             )
             page = context.new_page()
             
-            # Navigate to Bing
             console.print("Navigating to Bing...")
             page.goto(f"https://www.bing.com/search?q={query}&count=50", timeout=60000)
             random_delay(2, 4)
             
-            # Scroll to load more results if needed
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             random_delay(1, 2)
             
-            # Check for generic challenge/captcha
             if "challenge" in page.content().lower() or "captcha" in page.content().lower():
                 console.print("[bold red]Bing requires manual interaction (CAPTCHA/Challenge)![/bold red]")
                 console.print("[bold green]Please solve it in the browser window...[/bold green]")
@@ -83,7 +80,6 @@ def search_bing(query: str, limit: int = 50, headless: bool = False):
             for r in results:
                 href = r.get_attribute("href")
                 
-                # Handle Bing redirects
                 if href and "bing.com/ck/" in href:
                     try:
                         parsed = urllib.parse.urlparse(href)
@@ -199,21 +195,17 @@ def search_brave(query: str, limit: int = 50, headless: bool = True):
             )
             page = context.new_page()
             
-            # Initial Search
             page.goto(f"https://search.brave.com/search?q={query}&source=web", timeout=60000)
             
-            # Pagination Loop
             page_num = 1
             while len(unique_links) < limit:
                 console.print(f"[dim]Scraping Page {page_num}... (Found: {len(unique_links)}/{limit})[/dim]")
                 random_delay(2, 4)
                 
-                # Scroll to trigger lazy loading
                 for _ in range(3):
                     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                     time.sleep(1)
                 
-                # Extract Results
                 results = page.locator(".snippet[data-type='web']").all()
                 new_on_page = 0
                 
@@ -241,7 +233,6 @@ def search_brave(query: str, limit: int = 50, headless: bool = True):
                 try:
                     next_btn = page.get_by_role("link", name="Next").first
                     if not next_btn.is_visible():
-                        # Fallback for different DOM states
                         next_btn = page.locator("a:has-text('Next')").first
                     
                     if next_btn.is_visible():

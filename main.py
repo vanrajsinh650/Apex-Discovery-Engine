@@ -15,14 +15,12 @@ def interactive():
     console.print("[bold green]Apex Discovery Agent - Interactive Mode[/bold green]")
     console.print("This tool will help you discover website URLs for your search query.")
     
-    # 1. Get input from user
     query = input("\nEnter what to find (e.g., 'PG in Ahmedabad', 'Hostels in Mumbai'): ").strip()
     
     if not query:
         console.print("[yellow]No query provided. Exiting.[/yellow]")
         return
 
-    # 2. Run search
     console.print(f"\n[bold blue]Searching for:[/bold blue] {query}...")
     try:
         # Default settings for interactive mode
@@ -33,7 +31,8 @@ def interactive():
         from src.scraper.engine import search_waterfall
         urls = search_waterfall(query, limit=limit, headless=False)
         
-        # 3. Save results
+        urls = search_waterfall(query, limit=limit, headless=False)
+        
         if urls:
             console.print(f"\n[bold green]Found {len(urls)} unique URLs from this search.[/bold green]")
             
@@ -48,8 +47,6 @@ def interactive():
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        # User provided arguments (e.g., `python main.py discover ...`)
         app()
     else:
-        # No arguments, run interactive wizard
         interactive()

@@ -3,6 +3,16 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .vscode/
+
+# Data
 data/websites.json
+data/*.json
+
+# Logs and Debug
+*.log
 debug_*.png
 debug_*.html
+debug_*.py
+debug_tools/
+.env
+.DS_Store
