@@ -14,20 +14,25 @@ def callback():
 @app.command()
 def discover(
     query: str = typer.Option(..., help="Search query (e.g., 'PG in Bangalore')"),
-    limit: int = typer.Option(50, help="Max number of URLs to find"),
+    limit: int = typer.Option(0, help="Max number of URLs to find (0 for unlimited)"),
     output: str = typer.Option("data/websites.json", help="Output JSON file"),
     headless: bool = typer.Option(False, help="Run in headless mode (False is safer for stealth)"),
-    engine: str = typer.Option("auto", help="Search Engine: 'auto' (default), 'google', 'bing', 'brave', 'ddg'")
+    engine: str = typer.Option("auto", help="Search Engine: 'auto' (default), 'google', 'bing', 'brave', 'ddg'"),
+    reset: bool = typer.Option(False, help="Reset progress for this query and start from Page 1")
 ):
     """
     Discover websites matching a query using the Apex Discovery Agent.
     """
     console.print(f"[bold green]Starting Discovery for:[/bold green] {query} using [bold]{engine}[/bold]")
     
+    if reset:
+        from src.common.utils import reset_crawler_state
+        reset_crawler_state(query)
+
     urls = []
     if engine.lower() == "auto":
         from src.scraper.engine import search_waterfall
-        urls = search_waterfall(query, limit, headless)
+        urls = search_waterfall(query, limit, headless, output_file=output)
     elif engine.lower() == "bing":
         from src.scraper.engine import search_bing
         urls = search_bing(query, limit, headless)
@@ -36,14 +41,14 @@ def discover(
         urls = search_google_fallback(query, limit, headless)
     elif engine.lower() == "brave":
         from src.scraper.engine import search_brave
-        urls = search_brave(query, limit, headless)
+        urls = search_brave(query, limit, headless, output_file=output)
     elif engine.lower() == "ddg":
         from src.scraper.engine import search_ddg
         urls = search_ddg(query, limit, headless)
     else:
         console.print(f"[red]Unknown engine: {engine}. Defaulting to Auto Waterfall.[/red]")
         from src.scraper.engine import search_waterfall
-        urls = search_waterfall(query, limit, headless)
+        urls = search_waterfall(query, limit, headless, output_file=output)
     
     console.print(f"[bold]Found {len(urls)} unique URLs from this search.[/bold]")
     

@@ -24,14 +24,23 @@ def interactive():
     console.print(f"\n[bold blue]Searching for:[/bold blue] {query}...")
     try:
         # Default settings for interactive mode
-        limit = 50
+        limit = 0 # Unlimited by default
         output_file = "data/websites.json"
+        
+        # Check for existing state
+        from src.common.utils import load_crawler_state, reset_crawler_state
+        start_page = load_crawler_state(query)
+        if start_page > 1:
+            console.print(f"[yellow]Previous progress found (Page {start_page}).[/yellow]")
+            action = typer.prompt("Resume or Reset?", default="Resume")
+            if action.lower() == "reset":
+                reset_crawler_state(query)
         
         # Default to Waterfall (Auto)
         from src.scraper.engine import search_waterfall
-        urls = search_waterfall(query, limit=limit, headless=False)
+        urls = search_waterfall(query, limit=limit, headless=False, output_file=output_file)
         
-        urls = search_waterfall(query, limit=limit, headless=False)
+
         
         if urls:
             console.print(f"\n[bold green]Found {len(urls)} unique URLs from this search.[/bold green]")

@@ -155,3 +155,21 @@ def save_crawler_state(query: str, page_num: int):
     except Exception as e:
         console.print(f"[yellow]Warning: Could not save state: {e}[/yellow]")
 
+def reset_crawler_state(query: str):
+    """ Remove the state for a query to start fresh """
+    state_file = "data/crawler_state.json"
+    if not os.path.exists(state_file):
+        return
+        
+    try:
+        with open(state_file, "r") as f:
+            state = json.load(f)
+        
+        if query in state:
+            del state[query]
+            with open(state_file, "w") as f:
+                json.dump(state, f, indent=2)
+            console.print(f"[bold green]Reset progress for: {query}[/bold green]")
+    except Exception as e:
+        console.print(f"[red]Failed to reset state: {e}[/red]")
+

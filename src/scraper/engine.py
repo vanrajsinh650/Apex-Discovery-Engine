@@ -3,7 +3,7 @@ import time
 import base64
 import urllib.parse
 from playwright.sync_api import sync_playwright
-from src.common.utils import console, get_random_header, random_delay, normalize_url, load_crawler_state, save_crawler_state
+from src.common.utils import console, get_random_header, random_delay, normalize_url, load_crawler_state, save_crawler_state, save_unique_urls
 
 def search_google(query: str, limit: int = 50, headless: bool = True):
     """
@@ -47,15 +47,22 @@ def search_bing(query: str, limit: int = 50, headless: bool = False):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             random_delay(1, 2)
             
-            if "challenge" in page.content().lower() or "captcha" in page.content().lower():
-                console.print("[bold red]Bing requires manual interaction (CAPTCHA/Challenge)![/bold red]")
-                console.print("[bold green]Please solve it in the browser window...[/bold green]")
-                # Wait loop
-                for i in range(30):
-                    time.sleep(1)
-                    if "challenge" not in page.content().lower() and "captcha" not in page.content().lower():
-                        console.print("[green]Challenge passed![/green]")
-                        break
+            try:
+                if "challenge" in page.content().lower() or "captcha" in page.content().lower():
+                    console.print("[bold red]Bing requires manual interaction (CAPTCHA/Challenge)![/bold red]")
+                    console.print("[bold green]Please solve it in the browser window...[/bold green]")
+                    # Wait loop
+                    for i in range(30):
+                        time.sleep(1)
+                        try:
+                            if "challenge" not in page.content().lower() and "captcha" not in page.content().lower():
+                                console.print("[green]Challenge passed![/green]")
+                                break
+                        except:
+                            # If page is navigating, content() might fail. Ignore and wait.
+                            pass
+            except:
+                pass
                 
                 
             # Check for Local Pack (Bing Maps)
@@ -113,7 +120,7 @@ def search_bing(query: str, limit: int = 50, headless: bool = False):
                     if norm and norm not in unique_links:
                         unique_links.add(norm)
                         console.print(f"Found (Bing): {norm}")
-                        if len(unique_links) >= limit:
+                        if limit > 0 and len(unique_links) >= limit:
                             break
                             
             browser.close()
@@ -135,7 +142,7 @@ def search_google_fallback(query: str, limit: int = 50, headless: bool = False):
     headless = False 
     
     base_url = "https://www.google.com/search?q={}&num={}"
-    fetch_num = min(limit, 100) 
+    fetch_num = 100 if limit <= 0 else min(limit, 100) 
     target_url = base_url.format(query.replace(" ", "+"), fetch_num)
     
     with sync_playwright() as p:
@@ -175,7 +182,7 @@ def search_google_fallback(query: str, limit: int = 50, headless: bool = False):
                     if norm and norm not in unique_links:
                         unique_links.add(norm)
                         console.print(f"Found: {norm}")
-                        if len(unique_links) >= limit:
+                        if limit > 0 and len(unique_links) >= limit:
                             break
                             
             if not unique_links:
@@ -191,7 +198,7 @@ def search_google_fallback(query: str, limit: int = 50, headless: bool = False):
             
     return list(unique_links)
 
-def search_brave(query: str, limit: int = 50, headless: bool = True):
+def search_brave(query: str, limit: int = 50, headless: bool = False, output_file: str = "data/websites.json"):
     """
     Scrapes Brave Search with robust 50-page pagination.
     """
@@ -218,6 +225,12 @@ def search_brave(query: str, limit: int = 50, headless: bool = True):
                 page.goto(f"https://search.brave.com/search?q={query}&source=web&offset={offset}", timeout=60000)
             else:
                 page.goto(f"https://search.brave.com/search?q={query}&source=web", timeout=60000)
+            
+            # CAPTCHA Check
+            if "captcha" in page.content().lower() or "robot" in page.content().lower():
+                console.print("[bold red]Brave requires manual interaction![/bold red]")
+                console.print("[bold green]Please solve the CAPTCHA in the browser... (Waiting 30s)[/bold green]")
+                time.sleep(30)
             
             # Massive Pagination Loop (Max 50 Pages)
             # Range should start from start_page
@@ -273,7 +286,13 @@ def search_brave(query: str, limit: int = 50, headless: bool = True):
                 # Let's keep scraping until 50 or end of results, but maybe check limit if we have enough?
                 # If limit is default 50, we might stop too early. 
                 # Let's assume 'limit' is soft or user will increase it. 
-                if len(unique_links) >= limit:
+                # Incremental Save
+                if unique_links:
+                     save_unique_urls(list(unique_links), output_file)
+
+                # Limit Check
+                # If limit is 0, we don't stop based on count.
+                if limit > 0 and len(unique_links) >= limit:
                     console.print(f"[green]Hit limit of {limit} URLs.[/green]")
                     break
 
@@ -307,7 +326,7 @@ def search_brave(query: str, limit: int = 50, headless: bool = True):
             
     return list(unique_links)
 
-def search_waterfall(query: str, limit: int = 50, headless: bool = False):
+def search_waterfall(query: str, limit: int = 50, headless: bool = False, output_file: str = "data/websites.json"):
     """
     Robust Discovery: Brave -> Bing -> DuckDuckGo
     With Deep Scraping for Aggregators.
@@ -317,7 +336,7 @@ def search_waterfall(query: str, limit: int = 50, headless: bool = False):
     results = []
     
     # 1. Try Brave (Primary)
-    results = search_brave(query, limit, headless)
+    results = search_brave(query, limit, headless, output_file)
     
     if not results:
         console.print("[bold yellow]Brave failed/blocked. Switching to Bing...[/bold yellow]")
@@ -355,3 +374,37 @@ def extract_local_pack(page) -> list[str]:
     except:
         pass
     return local_links
+
+def search_ddg(query: str, limit: int = 50, headless: bool = True):
+    """
+    Searches DuckDuckGo using the DDGS library.
+    """
+    console.print(f"[bold yellow]Starting DuckDuckGo Search for:[/bold yellow] {query}")
+    unique_links = set()
+    
+    try:
+        from duckduckgo_search import DDGS
+        
+        # DDGS is synchronous
+        max_results = 100 if limit <= 0 else min(limit, 100)
+        
+        with DDGS() as ddgs:
+            results = ddgs.text(query, max_results=max_results)
+            
+            if results:
+                for r in results:
+                    href = r.get("href")
+                    if href:
+                        norm = normalize_url(href)
+                        if norm and norm not in unique_links:
+                            unique_links.add(norm)
+                            console.print(f"Found (DDG): {norm}")
+                            if limit > 0 and len(unique_links) >= limit:
+                                break
+            else:
+                console.print("[red]DDG returned no results.[/red]")
+                
+    except Exception as e:
+        console.print(f"[bold red]DDG Error:[/bold red] {e}")
+        
+    return list(unique_links)
