@@ -4,12 +4,14 @@ import time
 import os
 from playwright.sync_api import sync_playwright
 from rich.console import Console
-from src.common.utils import get_random_header, random_delay
+from src.core.utils import get_random_header, random_delay
 
 console = Console()
 
 # Regex Patterns
-PHONE_REGEX = r"(\+91)?[\s\-]?([6-9]\d{2,4}[\s\-]?\d{3,4}[\s\-]?\d{3,4})"
+# regex for 10-13 digit numbers, likely mobiles
+# Matches: +91 9999999999, 99999 99999, 09999999999, 999-999-9999
+PHONE_REGEX = r"(?:\+91|91|0)?\s?[\-]?\s?([6-9][0-9\s\-]{8,13})"
 PINCODE_REGEX = r"\b\d{6}\b"
 EMAIL_REGEX = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
 PRICE_REGEX = r"(₹|Rs\.?)\s?(\d{1,2}(,\d{2})*(,\d{3})*)"
@@ -17,10 +19,31 @@ PRICE_REGEX = r"(₹|Rs\.?)\s?(\d{1,2}(,\d{2})*(,\d{3})*)"
 def clean_phone(phone_str):
     """Normalize phone string to 10 digits"""
     if not phone_str: return None
+    # Remove all non-digits
     digits = re.sub(r"\D", "", phone_str)
-    if len(digits) > 10 and digits.startswith("91"):
-        digits = digits[2:]
+    
+    # Handle country codes
+    if len(digits) > 10:
+        if digits.startswith("91"):
+            digits = digits[2:]
+        elif digits.startswith("0") and len(digits) == 11:
+             digits = digits[1:]
+             
     return digits if len(digits) == 10 else None
+
+def extract_emails(text):
+    """Extracts unique emails from text"""
+    return set(re.findall(EMAIL_REGEX, text))
+
+def extract_meta_data(page):
+    """Extracts description and other meta tags"""
+    text = ""
+    try:
+        desc = page.locator("meta[name='description'], meta[property='og:description']").first
+        if desc.count() > 0:
+            text += desc.get_attribute("content") or ""
+    except: pass
+    return text
 
 def extract_tel_links(container):
     """Extracts numbers from href='tel:...' attributes"""
@@ -57,9 +80,10 @@ def reveal_contacts(page):
 def handle_blocking_elements(page):
     """
     Checks for and handles common blocking elements like overlays, modals, and cookie banners.
-    Returns True if an interaction occurred.
+    Returns (interacted, captcha_found).
     """
     interacted = False
+    captcha_found = False
     try:
         # 99acres "Ok, understood" overlay
         # Generic "Accept Cookies", "Continue", "Close" buttons
@@ -84,17 +108,29 @@ def handle_blocking_elements(page):
                 interacted = True
                 
         # CAPTCHA / Unusual Traffic Check
+        # CAPTCHA / Unusual Traffic Check
         content = page.content().lower()
-        if "captcha" in content or "unusual traffic" in content or "security check" in content:
-             console.print("   [bold red]CAPTCHA/Security check detected![/bold red]")
-             # If headless, we can't do much but wait or try to reload.
-             # User said "then go ahead without", implying we just try our best.
-             time.sleep(2)
+        # More specific phrases to avoid false positives
+        captcha_phrases = [
+            "verify you are human",
+            "access denied",
+            "security challenge",
+            "unusual traffic from your computer",
+            "confirm you are not a robot",
+            "please complete the security check",
+            "attention required! | cloudflare" 
+        ]
+        
+        for phrase in captcha_phrases:
+            if phrase in content:
+                 console.print(f"   [bold red]Blocking detected ({phrase})! Aborting use of this URL...[/bold red]")
+                 captcha_found = True
+                 break
 
     except:
         pass
         
-    return interacted
+    return interacted, captcha_found
 
 def extract_pg_data(url: str, headless: bool = True):
     """
@@ -123,7 +159,11 @@ def extract_pg_data(url: str, headless: bool = True):
                     random_delay(1, 2)
 
                     # Handle Blocks/Overlays BEFORE extraction
-                    if handle_blocking_elements(page):
+                    interacted, captcha = handle_blocking_elements(page)
+                    if captcha:
+                        browser.close()
+                        return []
+                    if interacted:
                         # If we closed something, maybe wait a bit/scroll again
                         time.sleep(1)
 
@@ -133,7 +173,11 @@ def extract_pg_data(url: str, headless: bool = True):
                         time.sleep(0.5)
 
                     # Post-Scroll Block Check (Some popups appear on scroll)
-                    if handle_blocking_elements(page):
+                    interacted, captcha = handle_blocking_elements(page)
+                    if captcha:
+                        browser.close()
+                        return []
+                    if interacted:
                         time.sleep(1)
 
                 except:
@@ -143,7 +187,10 @@ def extract_pg_data(url: str, headless: bool = True):
                     continue
                 
                 # Double check before clicking reveal
-                handle_blocking_elements(page)
+                interacted, captcha = handle_blocking_elements(page)
+                if captcha:
+                    browser.close()
+                    return []
                 
                 # CLICK TO REVEAL
                 reveal_contacts(page)
@@ -172,17 +219,41 @@ def extract_pg_data(url: str, headless: bool = True):
                             card_text = card.inner_text()
                             
                             name = "Unknown Listing"
+                            detail_url = None
+                            
                             try:
                                 heading = card.locator("h2, h3, h4, .title, .name, .store-name").first
                                 if heading.is_visible():
                                     name = heading.inner_text().strip()
+                                    # Try to find link in heading
+                                    link = heading.locator("a").first
+                                    if link.count() > 0:
+                                        href = link.get_attribute("href")
+                                        if href: detail_url = href
+                                    else:
+                                        # Try parent if heading itself isn't a link
+                                        parent_link = card.locator("a").first
+                                        if parent_link.count() > 0:
+                                             href = parent_link.get_attribute("href")
+                                             if href: detail_url = href
                             except: pass
-                                
+                            
+                            # Normalize URL
+                            if detail_url and not detail_url.startswith("http"):
+                                # Handle relative URLs
+                                base_domain = "/".join(url.split("/")[:3]) # https://example.com
+                                if detail_url.startswith("/"):
+                                    detail_url = base_domain + detail_url
+                                else:
+                                    detail_url = base_domain + "/" + detail_url
+
                             phones = set()
                             for match in re.finditer(PHONE_REGEX, card_text):
                                 p = clean_phone(match.group(0))
                                 if p: phones.add(p)
                             phones.update(extract_tel_links(card))
+                            
+                            emails = extract_emails(card_text)
                                 
                             address = "Not Found"
                             lines = card_text.split('\n')
@@ -192,24 +263,60 @@ def extract_pg_data(url: str, headless: bool = True):
                                         address = line.strip()
                                         break
                             
-                            if phones or (address != "Not Found" and name != "Unknown Listing"):
+                            # DEEP CRAWL LOGIC: If no contact info but we have a link, visit it!
+                            if not phones and not emails and detail_url:
+                                try:
+                                    # console.print(f"   [dim]Deep Crawling: {detail_url}...[/dim]")
+                                    new_page = context.new_page()
+                                    new_page.goto(detail_url, timeout=30000)
+                                    
+                                    # Handle blocks/clicks on detail page
+                                    handle_blocking_elements(new_page)
+                                    reveal_contacts(new_page)
+                                    
+                                    detail_text = new_page.locator("body").inner_text()
+                                    detail_meta = extract_meta_data(new_page)
+                                    detail_full_scan = detail_text + " " + detail_meta
+                                    
+                                    # Extract from detail page
+                                    for match in re.finditer(PHONE_REGEX, detail_full_scan):
+                                        p = clean_phone(match.group(0))
+                                        if p: phones.add(p)
+                                    phones.update(extract_tel_links(new_page))
+                                    emails.update(extract_emails(detail_full_scan))
+                                    
+                                    new_page.close()
+                                    time.sleep(1) # Be nice
+                                except:
+                                    try: new_page.close() 
+                                    except: pass
+                            
+                            if phones or emails or (address != "Not Found" and name != "Unknown Listing"):
                                 results.append({
                                     "name": name,
                                     "mobile": list(phones),
+                                    "email": list(emails),
                                     "address": address,
-                                    "source": url,
+                                    "source": detail_url if detail_url else url,
                                     "type": "Aggregator Listing"
                                 })
                         break 
                 
-                # --- Strategy 2: Whole Page Fallback ---
+                # --- Strategy 2: Whole Page Fallback (Direct Site) ---
                 if not results and not found_cards:
-                    unique_phones = set([clean_phone(p[0]) for p in re.finditer(PHONE_REGEX, content_text) if clean_phone(p[0])])
+                    # Combined content source: Body + Title + Meta Description
+                    meta_desc = extract_meta_data(page)
+                    full_text_scan = content_text + " " + page_title + " " + meta_desc
+                    
+                    unique_phones = set([clean_phone(p[0]) for p in re.finditer(PHONE_REGEX, full_text_scan) if clean_phone(p[0])])
                     unique_phones.update(extract_tel_links(page))
+                    
+                    unique_emails = extract_emails(full_text_scan)
 
                     # If no phones, try Contact button then retry scraping phones
                     if not unique_phones:
                         try:
+                            # 1. Click Reveal Buttons on current page
                             contact_btn = page.locator("a:has-text('Contact'), a:has-text('Call'), a:has-text('Reach Us')").first
                             if contact_btn.is_visible():
                                  contact_btn.click(timeout=3000)
@@ -220,6 +327,28 @@ def extract_pg_data(url: str, headless: bool = True):
                                     p = clean_phone(match.group(0))
                                     if p: unique_phones.add(p)
                                  unique_phones.update(extract_tel_links(page))
+                                 unique_emails.update(extract_emails(content_text))
+                            
+                            # 2. DEEP CRAWL: Visit "Contact Us" page if still no data
+                            if not unique_phones and not unique_emails:
+                                contact_link = page.locator("a[href*='contact'], a[href*='about'], a:has-text('Contact Us')").first
+                                if contact_link.count() > 0:
+                                    href = contact_link.get_attribute("href")
+                                    if href:
+                                        # console.print(f"   [dim]Visiting Contact Page: {href}...[/dim]")
+                                        page.goto(href, timeout=30000) # Navigate main page
+                                        time.sleep(2)
+                                        
+                                        c_text = page.locator("body").inner_text()
+                                        c_meta = extract_meta_data(page)
+                                        c_scan = c_text + " " + c_meta
+                                        
+                                        for match in re.finditer(PHONE_REGEX, c_scan):
+                                            p = clean_phone(match.group(0))
+                                            if p: unique_phones.add(p)
+                                        unique_phones.update(extract_tel_links(page))
+                                        unique_emails.update(extract_emails(c_scan))
+
                         except: pass
                     
                     address = "Not Found"
@@ -232,6 +361,7 @@ def extract_pg_data(url: str, headless: bool = True):
                     results.append({
                         "name": page_title,
                         "mobile": list(unique_phones),
+                        "email": list(unique_emails),
                         "address": address,
                         "source": url,
                         "type": "Direct Site"
@@ -251,7 +381,10 @@ def extract_pg_data(url: str, headless: bool = True):
                 else:
                     # If we are on the last attempt, don't clear results, just return what we have (even if empty/poor)
                     if attempt < 3:
-                        handle_blocking_elements(page) # Try harder to clear blocks
+                        interacted, captcha = handle_blocking_elements(page) # Try harder to clear blocks
+                        if captcha:
+                            browser.close()
+                            return []
                         time.sleep(2)
 
             browser.close()

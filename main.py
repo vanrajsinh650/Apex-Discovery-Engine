@@ -4,9 +4,10 @@ import os
 from rich.console import Console
 
 from src.cli import app
-from src.scraper.engine import search_google
+from src.scrapers.search import search_google
 
 console = Console()
+import typer
 
 def interactive():
     """
@@ -28,7 +29,7 @@ def interactive():
         output_file = "data/websites.json"
         
         # Check for existing state
-        from src.common.utils import load_crawler_state, reset_crawler_state
+        from src.core.utils import load_crawler_state, reset_crawler_state
         start_page = load_crawler_state(query)
         if start_page > 1:
             console.print(f"[yellow]Previous progress found (Page {start_page}).[/yellow]")
@@ -37,7 +38,7 @@ def interactive():
                 reset_crawler_state(query)
         
         # Default to Waterfall (Auto)
-        from src.scraper.engine import search_waterfall
+        from src.scrapers.search import search_waterfall
         urls = search_waterfall(query, limit=limit, headless=False, output_file=output_file)
         
 
@@ -45,13 +46,13 @@ def interactive():
         if urls:
             console.print(f"\n[bold green]Found {len(urls)} unique URLs from this search.[/bold green]")
             
-            from src.common.utils import save_unique_urls
+            from src.core.utils import save_unique_urls
             save_unique_urls(urls, output_file)
             
             # Follow-up: Extraction Prompt
             console.print("\n[bold cyan]--- Phase 2: Data Extraction ---[/bold cyan]")
             if typer.confirm("Do you want to extract Contact Info (Mobile, Address) from these URLs?"):
-                from src.scraper.extractor import process_websites_list
+                from src.scrapers.listing import process_websites_list
                 process_websites_list(input_file=output_file, output_file="data/pg.json")
                 
         else:
