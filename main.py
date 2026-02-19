@@ -4,7 +4,7 @@ import os
 from rich.console import Console
 
 from src.cli import app
-from src.scrapers.search import search_google
+from src.scrapers.core.search_coordinator import search_google
 
 console = Console()
 import typer
@@ -38,7 +38,7 @@ def interactive():
                 reset_crawler_state(query)
         
         # Default to Waterfall (Auto)
-        from src.scrapers.search import search_waterfall
+        from src.scrapers.core.search_coordinator import search_waterfall
         urls = search_waterfall(query, limit=limit, headless=False, output_file=output_file)
         
 
@@ -52,7 +52,7 @@ def interactive():
             # Follow-up: Extraction Prompt
             console.print("\n[bold cyan]--- Phase 2: Data Extraction ---[/bold cyan]")
             if typer.confirm("Do you want to extract Contact Info (Mobile, Address) from these URLs?"):
-                from src.scrapers.listing import process_websites_list
+                from src.scrapers.core.listing import process_websites_list
                 process_websites_list(input_file=output_file, output_file="data/pg.json")
                 
         else:

@@ -5,10 +5,10 @@ import os
 import json
 from rich.console import Console
 from src.core.utils import get_random_header, random_delay, normalize_url
-from src.scrapers.maps import search_google_maps
-from src.scrapers.brave import search_brave
-from src.scrapers.bing import search_bing
-from src.scrapers.listing import extract_pg_data, clean_phone, PHONE_REGEX
+from src.scrapers.engines.google_maps import search_google_maps
+from src.scrapers.engines.brave import search_brave
+from src.scrapers.engines.bing import search_bing
+from src.scrapers.core.listing import extract_pg_data, clean_phone, PHONE_REGEX
 
 console = Console()
 

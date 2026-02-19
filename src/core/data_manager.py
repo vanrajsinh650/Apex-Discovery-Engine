@@ -3,14 +3,16 @@ import os
 import re
 from urllib.parse import urlparse
 from rich.console import Console
+from src.exporters.excel import export_to_excel_perfect
 
 console = Console()
 
 class MasterDataManager:
     BLACKLIST_TERMS = ["news", "samachar", "quora", "wikipedia", "article", "report", "times of india", "divya bhaskar"]
 
-    def __init__(self, master_file: str = "data/master_pg_list.json"):
+    def __init__(self, master_file: str = "data/master_pg_list.json", city: str = None):
         self.master_file = master_file
+        self.city = city.lower() if city else None
         self.data = []
         self.unverified_numbers = []
         self.load_master()
@@ -39,6 +41,12 @@ class MasterDataManager:
                     json.dump(self.unverified_numbers, f, indent=2)
         except Exception as e:
             console.print(f"[red]Error saving master data: {e}[/red]")
+            
+        # Trigger perfect excel export
+        try:
+            export_to_excel_perfect(self.master_file)
+        except Exception as e:
+            console.print(f"[red]Error triggering excel export: {e}[/red]")
 
     def clean_phone_10_digit(self, phone):
         """
@@ -71,15 +79,65 @@ class MasterDataManager:
         if not name: return ""
         return re.sub(r'[^a-zA-Z0-9]', '', name).lower()
 
+    def validate_location(self, entity):
+        """
+        Strictly validates if the entity belongs to the target city.
+        Returns: (bool, reason)
+        """
+        if not self.city: 
+            return True, "No city filter"
+            
+        address = (entity.get("address") or "").lower()
+        if not address:
+            return True, "No address"
+            
+        # 1. Negative Filter (Reject explicit wrong cities)
+        wrong_cities = ["gurgaon", "bangalore", "bengaluru", "mumbai", "delhi", "noida", "hyderabad", "pune", "chennai"]
+        # Remove target city from wrong_cities if present (safety)
+        if self.city in wrong_cities: wrong_cities.remove(self.city)
+        
+        has_wrong_city = any(wc in address for wc in wrong_cities)
+        has_target_city = self.city in address
+        
+        if has_wrong_city and not has_target_city:
+            return False, f"Address in wrong city: {address}"
+            
+        # 2. Positive Filter (Must match City OR Pin Prefix)
+        # Ahmedabad Pin Prefix = 38
+        pin_matched = False
+        if self.city == "ahmedabad":
+            if "38" in address: # Weak check, better regex?
+                # Check for 6 digit pin starting with 38
+                if re.search(r"\b38\d{4}\b", address):
+                    pin_matched = True
+        
+        if has_target_city or pin_matched:
+            return True, "Matched"
+            
+        # If we are here, it didn't match target city and didn't match pin.
+        # But it also didn't match a wrong city.
+        # It might be a local address without city name (e.g. "Navrangpura, Gujarat").
+        # We'll allow it but log it? Or Strict reject?
+        # user said: "Rule 2... If city name is missing, check Pin Code."
+        # Implying if neither, reject?
+        # Let's be strict as requested.
+        return False, f"Location mismatch (No {self.city} or Pin match): {address}"
+
     def upsert_entity(self, new_entity):
         """
         updates or inserts an entity into the master list.
         Matching logic: Domain (Primary) OR Name (Secondary).
         """
         # --- Strict Filter ---
-        name = new_entity.get("name", "").lower()
+        name = (new_entity.get("name") or "").lower()
         if any(term in name for term in self.BLACKLIST_TERMS):
             return "Skipped (Blacklist)"
+            
+        # --- Location Validation ---
+        is_valid, reason = self.validate_location(new_entity)
+        if not is_valid:
+            # console.print(f"[dim red]Skipped Location: {reason}[/dim red]")
+            return f"Skipped ({reason})"
 
         matched_idx = -1
         
