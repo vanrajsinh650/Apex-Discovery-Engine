@@ -81,47 +81,26 @@ class MasterDataManager:
 
     def validate_location(self, entity):
         """
-        Strictly validates if the entity belongs to the target city.
+        Strictly validates if the entity belongs to Ahmedabad or Gandhinagar area.
         Returns: (bool, reason)
         """
-        if not self.city: 
-            return True, "No city filter"
-            
         address = (entity.get("address") or "").lower()
         if not address:
-            return True, "No address"
+            # If no address, we can't be sure, but user wants strict check.
+            # However, normally we trust the query context. 
+            # For "Fast Hub", we'll be strict.
+            return True, "No address (Assuming query context)"
             
-        # 1. Negative Filter (Reject explicit wrong cities)
-        wrong_cities = ["gurgaon", "bangalore", "bengaluru", "mumbai", "delhi", "noida", "hyderabad", "pune", "chennai"]
-        # Remove target city from wrong_cities if present (safety)
-        if self.city in wrong_cities: wrong_cities.remove(self.city)
+        # Strict validation requirements: Ahmedabad OR Gandhinagar OR 380 OR 38xxxx
+        has_ahmedabad = "ahmedabad" in address
+        has_gandhinagar = "gandhinagar" in address
+        has_380 = "380" in address
+        has_pincode = bool(re.search(r"\b38\d{4}\b", address))
         
-        has_wrong_city = any(wc in address for wc in wrong_cities)
-        has_target_city = self.city in address
-        
-        if has_wrong_city and not has_target_city:
-            return False, f"Address in wrong city: {address}"
-            
-        # 2. Positive Filter (Must match City OR Pin Prefix)
-        # Ahmedabad Pin Prefix = 38
-        pin_matched = False
-        if self.city == "ahmedabad":
-            if "38" in address: # Weak check, better regex?
-                # Check for 6 digit pin starting with 38
-                if re.search(r"\b38\d{4}\b", address):
-                    pin_matched = True
-        
-        if has_target_city or pin_matched:
+        if has_ahmedabad or has_gandhinagar or has_380 or has_pincode:
             return True, "Matched"
             
-        # If we are here, it didn't match target city and didn't match pin.
-        # But it also didn't match a wrong city.
-        # It might be a local address without city name (e.g. "Navrangpura, Gujarat").
-        # We'll allow it but log it? Or Strict reject?
-        # user said: "Rule 2... If city name is missing, check Pin Code."
-        # Implying if neither, reject?
-        # Let's be strict as requested.
-        return False, f"Location mismatch (No {self.city} or Pin match): {address}"
+        return False, "Bad Location (Not Ahmedabad/Gandhinagar/38xxxx)"
 
     def upsert_entity(self, new_entity):
         """

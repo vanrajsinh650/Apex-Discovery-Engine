@@ -6,7 +6,7 @@ from urllib.parse import urlparse, urljoin
 from playwright.async_api import async_playwright
 from rich.console import Console
 from tqdm.asyncio import tqdm
-from src.core.utils import get_random_header, random_delay
+from src.core.utils import get_random_header, random_delay, load_processed_sites, mark_as_processed
 from src.core.data_manager import MasterDataManager
 from src.scrapers.core.listing import (
     clean_phone, extract_emails, extract_tel_links, 
@@ -203,18 +203,7 @@ class AsyncDeepCrawler:
              
         return entity
 
-# --- Checkpointing ---
-PROCESSED_FILE = "data/processed_sites.txt"
 
-def load_processed_sites():
-    if not os.path.exists(PROCESSED_FILE):
-        return set()
-    with open(PROCESSED_FILE, "r") as f:
-        return set(line.strip() for line in f if line.strip())
-
-def mark_as_processed(domain):
-    with open(PROCESSED_FILE, "a") as f:
-        f.write(f"{domain}\n")
 
 async def run_batch(urls, output_file, city=None):
     # Initialize Manager
@@ -304,3 +293,6 @@ def process_deep_study(input_file: str, output_file: str, city: str = None):
     with open(input_file, "r") as f:
         urls = json.load(f)
     asyncio.run(run_batch(urls, output_file, city=city))
+
+# Bridge Alias
+deep_study_site = process_deep_study

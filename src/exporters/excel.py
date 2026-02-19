@@ -238,3 +238,5 @@ if __name__ == "__main__":
         app()
     else:
         interactive()
+# Bridge Alias
+save_lead_to_excel = export_to_excel_perfect

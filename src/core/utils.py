@@ -173,3 +173,16 @@ def reset_crawler_state(query: str):
     except Exception as e:
         console.print(f"[red]Failed to reset state: {e}[/red]")
 
+PROCESSED_FILE = "data/processed_sites.txt"
+
+def load_processed_sites():
+    """Loads a set of processed domains to avoid re-scraping."""
+    if not os.path.exists(PROCESSED_FILE):
+        return set()
+    with open(PROCESSED_FILE, "r") as f:
+        return set(line.strip() for line in f if line.strip())
+
+def mark_as_processed(domain):
+    """Appends a domain to the processed list."""
+    with open(PROCESSED_FILE, "a") as f:
+        f.write(f"{domain}\n")
